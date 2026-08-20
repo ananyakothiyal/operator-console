@@ -1,0 +1,9 @@
+{
+  "name": "instalily-operator-console",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Operator Console — a work sample for the InstaLILY Operator, Office of the CEO application. Generates leadership digests, board updates, and town hall talking points from messy input, and saves each brief to Notion.",
+  "engines": {
+    "node": ">=18"
+  }
+}
