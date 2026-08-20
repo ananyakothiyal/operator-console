@@ -212,6 +212,21 @@
     border-radius: 3px; padding: 10px 12px; font-size: 12px; font-family: 'IBM Plex Mono', monospace; margin-top: 10px;
   }
 
+  .pdf-status{
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 11.5px;
+    color: var(--teal);
+    margin-top: 10px;
+    display: none;
+  }
+  .pdf-status.visible{ display: block; }
+  .pdf-status.error{ color: #ffb3b3; }
+
+  textarea.drag-over{
+    outline: 2px dashed var(--teal);
+    outline-offset: 2px;
+  }
+
   .footer-bar{
     display:flex; justify-content:space-between; align-items:center; padding: 12px 24px;
     border-top: 1px solid var(--line); background: var(--panel-2); flex-wrap: wrap; gap: 8px;
@@ -267,11 +282,14 @@
       <div class="panel">
         <div class="panel-head"><div class="panel-label">01 · Raw input</div></div>
         <div class="panel-body">
-          <textarea id="inputText" placeholder="Paste messy notes, a call transcript, or scattered updates here..."></textarea>
+          <textarea id="inputText" placeholder="Paste messy notes, a call transcript, or scattered updates here... (or drop a PDF)"></textarea>
           <div class="btn-row">
             <button id="sampleBtn" type="button">Load sample input</button>
+            <button id="pdfBtn" type="button">Upload PDF transcript</button>
             <button id="generateBtn" class="btn-primary" type="button">Generate brief</button>
           </div>
+          <input type="file" id="pdfInput" accept="application/pdf" style="display:none" />
+          <div id="pdfStatus"></div>
           <div id="errorBox"></div>
         </div>
       </div>
@@ -292,10 +310,18 @@
 
 </div>
 
-<script>
+<script type="module">
   // Note: no API keys live here. This calls our own backend at
   // /api/generate-brief, which holds the Anthropic and Notion credentials
   // server-side. See api/generate-brief.js.
+
+  // PDF.js, loaded as an ES module, purely for client-side text extraction.
+  // Nothing ever gets uploaded anywhere for this step — the parsing happens
+  // entirely in the browser, and only the extracted text gets sent to our
+  // backend when you click Generate.
+  import * as pdfjsLib from 'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.2.108/build/pdf.min.mjs';
+  pdfjsLib.GlobalWorkerOptions.workerSrc =
+    'https://cdn.jsdelivr.net/npm/pdfjs-dist@6.2.108/build/pdf.worker.min.mjs';
 
   const MODES = {
     digest: {
@@ -358,6 +384,7 @@
     output.className = 'output-empty';
     output.textContent = 'Pick a format above, add input, and generate.';
     errorBox.innerHTML = '';
+    clearPdfStatus();
     setStatus('idle');
     lastBriefText = '';
     updateWordCount();
@@ -366,6 +393,85 @@
   sampleBtn.addEventListener('click', () => {
     inputText.value = MODES[currentMode].sample;
     updateWordCount();
+  });
+
+  // ---- PDF upload ----
+  const pdfBtn = document.getElementById('pdfBtn');
+  const pdfInput = document.getElementById('pdfInput');
+  const pdfStatus = document.getElementById('pdfStatus');
+
+  function setPdfStatus(message, isError){
+    pdfStatus.textContent = message;
+    pdfStatus.className = 'pdf-status visible' + (isError ? ' error' : '');
+  }
+  function clearPdfStatus(){
+    pdfStatus.className = 'pdf-status';
+    pdfStatus.textContent = '';
+  }
+
+  async function extractPdfText(file){
+    const arrayBuffer = await file.arrayBuffer();
+    const pdf = await pdfjsLib.getDocument({ data: arrayBuffer }).promise;
+    let fullText = '';
+    for(let i = 1; i <= pdf.numPages; i++){
+      const page = await pdf.getPage(i);
+      const content = await page.getTextContent();
+      const pageText = content.items.map(item => item.str).join(' ');
+      fullText += pageText.trim() + '\n\n';
+    }
+    return fullText.trim();
+  }
+
+  async function handlePdfFile(file){
+    if(!file) return;
+    if(file.type !== 'application/pdf' && !file.name.toLowerCase().endsWith('.pdf')){
+      setPdfStatus('That file doesn\u2019t look like a PDF. Try a .pdf transcript instead.', true);
+      return;
+    }
+    if(file.size > 20 * 1024 * 1024){
+      setPdfStatus('That PDF is over 20MB \u2014 try a shorter transcript.', true);
+      return;
+    }
+
+    setPdfStatus(`Extracting text from ${file.name}...`, false);
+    pdfBtn.disabled = true;
+
+    try{
+      const text = await extractPdfText(file);
+      if(!text || text.length < 20){
+        setPdfStatus('Couldn\u2019t find readable text in that PDF \u2014 it may be a scanned document (image-only). Try pasting the content manually instead.', true);
+        return;
+      }
+      inputText.value = text;
+      updateWordCount();
+      setPdfStatus(`Loaded ${text.trim().split(/\s+/).length} words from ${file.name}.`, false);
+    } catch(err){
+      console.error('PDF extraction error:', err);
+      setPdfStatus('Couldn\u2019t read that PDF. It may be corrupted or password-protected.', true);
+    } finally{
+      pdfBtn.disabled = false;
+    }
+  }
+
+  pdfBtn.addEventListener('click', () => pdfInput.click());
+  pdfInput.addEventListener('change', (e) => {
+    handlePdfFile(e.target.files[0]);
+    pdfInput.value = ''; // allow re-uploading the same file later
+  });
+
+  // Drag-and-drop a PDF straight onto the textarea
+  inputText.addEventListener('dragover', (e) => {
+    e.preventDefault();
+    inputText.classList.add('drag-over');
+  });
+  inputText.addEventListener('dragleave', () => {
+    inputText.classList.remove('drag-over');
+  });
+  inputText.addEventListener('drop', (e) => {
+    e.preventDefault();
+    inputText.classList.remove('drag-over');
+    const file = e.dataTransfer.files[0];
+    if(file) handlePdfFile(file);
   });
 
   function updateWordCount(outWords){
