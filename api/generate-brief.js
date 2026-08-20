@@ -1,642 +1,147 @@
-<!DOCTYPE html>
-<html lang="en">
-<head>
-<meta charset="UTF-8" />
-<meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Operator Console — InstaLILY Work Sample</title>
-<style>
-  @import url('https://fonts.googleapis.com/css2?family=IBM+Plex+Mono:wght@400;500;600;700&family=Inter:wght@400;500;600;700;800&display=swap');
+// api/generate-brief.js
+// Vercel serverless function. Runs server-side only — your API keys never
+// reach the browser. Reads ANTHROPIC_API_KEY, NOTION_TOKEN, and
+// NOTION_DATABASE_ID from environment variables (set these in the Vercel
+// dashboard, never in this file).
 
-  :root{
-    --bg: #0f1218;
-    --panel: #171c25;
-    --panel-2: #1c2330;
-    --line: #262e3d;
-    --line-soft: #1a212c;
-    --text: #eef0f3;
-    --text-dim: #909aac;
-    --text-faint: #545e70;
-    --amber: #ff8a3d;
-    --amber-soft: rgba(255,138,61,0.10);
-    --teal: #3ddbc0;
-    --teal-soft: rgba(61,219,192,0.10);
-    --red: #ff5c5c;
-  }
+const MODES = {
+  digest: {
+    label: "Leadership digest",
+    system:
+      "You are an internal briefing assistant at InstaLILY, an AI company building 'InstaWorkers' and 'Lily', an AI Forward Deployed Engineer, for the physical goods economy: industrial distribution, healthcare, supply chain, manufacturing, and automotive. Turn messy raw input into a tight, decision-ready brief for company leadership. Respond in plain text using exactly this structure, each label alone on its own capitalized line:\n\nSITUATION\n(1-2 sentences of context)\n\nSIGNAL\n(3-5 short bullet points, most important first, each starting with a dash)\n\nSO WHAT\n(1-2 sentences on why this matters)\n\nRECOMMENDED ACTION\n(one clear, specific next step)\n\nKeep the whole thing under 150 words. Be direct. Cut anything not decision-relevant. No markdown asterisks.",
+  },
+  board: {
+    label: "Board update",
+    system:
+      "You are an internal briefing assistant at InstaLILY, an AI company building 'InstaWorkers' and 'Lily', an AI Forward Deployed Engineer, for the physical goods economy. Turn messy raw input into a crisp board-ready update. Respond in plain text using exactly this structure, each label alone on its own capitalized line:\n\nHEADLINE\n(one line, the single most important takeaway)\n\nPROGRESS\n(2-3 short bullets of what moved or shipped, each starting with a dash)\n\nRISKS\n(1-2 short bullets of what could go wrong, each starting with a dash)\n\nASK\n(what, if anything, the board should weigh in on or approve)\n\nKeep the whole thing under 150 words. Be precise and unemotional. No markdown asterisks.",
+  },
+  townhall: {
+    label: "Town hall talking points",
+    system:
+      "You are an internal communications assistant at InstaLILY, an AI company building 'InstaWorkers' and 'Lily', an AI Forward Deployed Engineer, for the physical goods economy. Turn messy raw input into short, energizing town hall talking points for the whole company, not just leadership. Respond in plain text using exactly this structure, each label alone on its own capitalized line:\n\nTHE HEADLINE\n(one line, what happened, in plain language)\n\nWHY IT MATTERS\n(1-2 sentences connecting it to the company's mission or momentum)\n\nTHE NUMBER\n(one concrete stat if one exists in the input, otherwise the clearest fact available)\n\nWHAT'S NEXT\n(1 sentence, forward-looking)\n\nKeep the whole thing under 120 words. Warm but not corporate. No markdown asterisks.",
+  },
+};
 
-  *{ box-sizing: border-box; }
-  html, body{
-    margin:0; padding:0;
-    background: var(--bg);
-    color: var(--text);
-    font-family: 'Inter', sans-serif;
-    -webkit-font-smoothing: antialiased;
+export default async function handler(req, res) {
+  if (req.method !== "POST") {
+    res.setHeader("Allow", "POST");
+    return res.status(405).json({ error: "Method not allowed" });
   }
 
-  .bg-grid{
-    position: fixed;
-    inset: 0;
-    pointer-events: none;
-    background-image:
-      linear-gradient(rgba(255,255,255,0.025) 1px, transparent 1px),
-      linear-gradient(90deg, rgba(255,255,255,0.025) 1px, transparent 1px);
-    background-size: 42px 42px;
-    mask-image: radial-gradient(ellipse 80% 60% at 50% 0%, #000 40%, transparent 90%);
-    z-index: 0;
-  }
-
-  .wrap{
-    position: relative;
-    z-index: 1;
-    max-width: 1080px;
-    margin: 0 auto;
-    padding: 40px 22px 70px;
-  }
-
-  /* ---- Hero ---- */
-  .eyebrow{
-    font-family:'IBM Plex Mono', monospace;
-    font-size: 11px;
-    letter-spacing: 0.18em;
-    text-transform: uppercase;
-    color: var(--amber);
-    display:flex;
-    align-items:center;
-    gap: 9px;
-    margin-bottom: 16px;
-  }
-  .eyebrow::before{
-    content:"";
-    width: 16px; height: 1px;
-    background: var(--amber);
-  }
-
-  h1{
-    font-size: clamp(28px, 4vw, 40px);
-    line-height: 1.15;
-    letter-spacing: -0.01em;
-    font-weight: 800;
-    margin: 0 0 14px;
-    max-width: 720px;
-  }
-  h1 em{
-    font-style: normal;
-    color: var(--amber);
-  }
-
-  .hero-sub{
-    color: var(--text-dim);
-    font-size: 15px;
-    line-height: 1.65;
-    max-width: 640px;
-    margin: 0 0 22px;
-  }
-
-  blockquote{
-    margin: 0 0 26px;
-    padding: 14px 18px;
-    border-left: 2px solid var(--teal);
-    background: var(--panel);
-    border-radius: 0 4px 4px 0;
-    font-size: 13.5px;
-    color: var(--text);
-    line-height: 1.6;
-    max-width: 640px;
-  }
-  blockquote cite{
-    display:block;
-    font-family:'IBM Plex Mono', monospace;
-    font-style: normal;
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    color: var(--text-faint);
-    text-transform: uppercase;
-    margin-top: 8px;
-  }
-
-  .bridge{
-    font-size: 13.5px;
-    color: var(--text-dim);
-    line-height: 1.65;
-    max-width: 700px;
-    margin: 0 0 34px;
-  }
-  .bridge b{ color: var(--text); font-weight: 600; }
-
-  /* ---- Console frame ---- */
-  .console{
-    border: 1px solid var(--line);
-    border-radius: 6px;
-    background: linear-gradient(180deg, #151a23, #12161e);
-    position: relative;
-    overflow: hidden;
-  }
-  .console::before, .console::after{
-    content:"";
-    position:absolute;
-    width:12px; height:12px;
-    border-color: var(--text-faint);
-    border-style: solid;
-    z-index: 2;
-  }
-  .console::before{ top:8px; left:8px; border-width:1.5px 0 0 1.5px; }
-  .console::after{ bottom:8px; right:8px; border-width:0 1.5px 1.5px 0; }
-
-  .console-bar{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    gap: 16px;
-    padding: 16px 24px;
-    border-bottom: 1px solid var(--line);
-    flex-wrap: wrap;
-  }
-  .console-left{ display:flex; align-items:center; gap:13px; }
-
-  .led{
-    width: 10px; height: 10px;
-    border-radius: 50%;
-    background: var(--amber);
-    box-shadow: 0 0 8px var(--amber);
-    flex-shrink:0;
-    transition: background .3s ease, box-shadow .3s ease;
-  }
-  .led.processing{
-    background: var(--teal);
-    box-shadow: 0 0 10px var(--teal);
-    animation: pulse 0.9s ease-in-out infinite;
-  }
-  .led.done{ background: var(--teal); box-shadow: 0 0 8px var(--teal); animation:none; }
-  @keyframes pulse{
-    0%, 100%{ opacity: 1; transform: scale(1); }
-    50%{ opacity: .45; transform: scale(.82); }
-  }
-  @media (prefers-reduced-motion: reduce){ .led.processing{ animation: none; } }
-
-  .console-title{
-    font-family:'IBM Plex Mono', monospace;
-    font-size: 12.5px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text);
-  }
-  .console-sub{
-    font-family:'IBM Plex Mono', monospace;
-    font-size: 10.5px;
-    color: var(--text-faint);
-    letter-spacing: 0.06em;
-    margin-top: 2px;
-  }
-  .status-readout{
-    font-family:'IBM Plex Mono', monospace;
-    font-size: 10.5px;
-    letter-spacing: 0.1em;
-    text-transform: uppercase;
-    color: var(--text-dim);
-  }
-  .status-readout span{ color: var(--teal); }
-
-  /* ---- Mode switch ---- */
-  .mode-row{
-    display:flex;
-    gap: 8px;
-    padding: 14px 24px;
-    border-bottom: 1px solid var(--line);
-    flex-wrap: wrap;
-  }
-  .mode-btn{
-    font-family:'IBM Plex Mono', monospace;
-    font-size: 10.5px;
-    letter-spacing: 0.08em;
-    text-transform: uppercase;
-    padding: 8px 13px;
-    border-radius: 3px;
-    border: 1px solid var(--line);
-    background: var(--panel-2);
-    color: var(--text-dim);
-    cursor: pointer;
-    transition: all .15s ease;
-  }
-  .mode-btn:hover{ color: var(--text); border-color: var(--text-faint); }
-  .mode-btn.active{
-    background: var(--amber-soft);
-    border-color: var(--amber);
-    color: var(--amber);
-  }
-
-  /* ---- Grid panels ---- */
-  .grid{
-    display:grid;
-    grid-template-columns: 1fr 1fr;
-  }
-  @media (max-width: 820px){ .grid{ grid-template-columns: 1fr; } }
-
-  .panel{
-    display:flex;
-    flex-direction:column;
-    min-height: 400px;
-  }
-  .panel + .panel{ border-left: 1px solid var(--line); }
-  @media (max-width: 820px){
-    .panel + .panel{ border-left:none; border-top: 1px solid var(--line); }
-  }
-
-  .panel-head{
-    display:flex;
-    align-items:center;
-    justify-content:space-between;
-    padding: 12px 20px;
-    border-bottom: 1px solid var(--line-soft);
-  }
-  .panel-label{
-    font-family:'IBM Plex Mono', monospace;
-    font-size: 10px;
-    letter-spacing: 0.14em;
-    text-transform: uppercase;
-    color: var(--text-faint);
-  }
-  .panel-body{
-    padding: 18px 20px 20px;
-    flex: 1;
-    display:flex;
-    flex-direction:column;
-  }
-
-  textarea{
-    flex:1;
-    width:100%;
-    min-height: 230px;
-    resize: vertical;
-    background: var(--panel-2);
-    border: 1px solid var(--line);
-    border-radius: 3px;
-    color: var(--text);
-    font-family: 'Inter', sans-serif;
-    font-size: 13.5px;
-    line-height: 1.55;
-    padding: 12px;
-  }
-  textarea::placeholder{ color: var(--text-faint); }
-  textarea:focus, button:focus-visible{
-    outline: 2px solid var(--teal);
-    outline-offset: 1px;
-  }
-
-  .btn-row{ display:flex; gap:10px; margin-top: 12px; flex-wrap: wrap; }
-
-  button{
-    font-family: 'IBM Plex Mono', monospace;
-    font-size: 11px;
-    letter-spacing: 0.07em;
-    text-transform: uppercase;
-    padding: 10px 15px;
-    border-radius: 3px;
-    border: 1px solid var(--line);
-    background: var(--panel-2);
-    color: var(--text);
-    cursor: pointer;
-    transition: border-color .15s ease, color .15s ease, background .15s ease;
-  }
-  button:hover{ border-color: var(--text-dim); }
-  .btn-primary{
-    background: var(--amber);
-    color: #1a1206;
-    border-color: var(--amber);
-    font-weight: 600;
-  }
-  .btn-primary:hover{ background: #ff9d5c; border-color:#ff9d5c; }
-  .btn-primary:disabled{
-    background: var(--panel-2);
-    color: var(--text-faint);
-    border-color: var(--line);
-    cursor: not-allowed;
-  }
-  .btn-ghost{ background: transparent; color: var(--text-dim); font-size: 10.5px; padding: 7px 11px; }
-  .btn-ghost:hover{ color: var(--teal); border-color: var(--teal); }
-
-  .output{ flex:1; font-size: 13.5px; line-height: 1.7; color: var(--text); }
-  .output-empty{
-    flex:1; display:flex; align-items:center; justify-content:center;
-    text-align:center; color: var(--text-faint);
-    font-family:'IBM Plex Mono', monospace;
-    font-size: 11.5px; letter-spacing: 0.05em; padding: 20px;
-  }
-  .output-section{ margin-bottom: 16px; }
-  .output-section:last-child{ margin-bottom: 0; }
-  .output-section h4{
-    font-family:'IBM Plex Mono', monospace;
-    font-size: 10.5px;
-    letter-spacing: 0.12em;
-    color: var(--amber);
-    margin: 0 0 7px;
-    text-transform: uppercase;
-    display:flex;
-    align-items:center;
-    gap:7px;
-  }
-  .output-section h4::before{
-    content:"";
-    width:5px; height:5px;
-    background: var(--amber);
-    display:inline-block;
-  }
-  .output-section div{ color: var(--text); font-size: 13.5px; margin-bottom: 4px; }
-  .output-actions{
-    display:flex; gap:8px; margin-top: 16px;
-    padding-top: 14px; border-top: 1px solid var(--line-soft);
-  }
-
-  .error-box{
-    border: 1px solid var(--red);
-    background: rgba(255,92,92,0.08);
-    color: #ffb3b3;
-    border-radius: 3px;
-    padding: 10px 12px;
-    font-size: 12px;
-    font-family: 'IBM Plex Mono', monospace;
-    margin-top: 10px;
-  }
-
-  .footer-bar{
-    display:flex; justify-content:space-between; align-items:center;
-    padding: 12px 24px;
-    border-top: 1px solid var(--line);
-    background: var(--panel-2);
-    flex-wrap: wrap; gap: 8px;
-  }
-  .footer-bar span{
-    font-family:'IBM Plex Mono', monospace;
-    font-size: 10px;
-    letter-spacing: 0.07em;
-    color: var(--text-faint);
-    text-transform: uppercase;
-  }
-</style>
-</head>
-<body>
-
-<div class="bg-grid"></div>
-
-<div class="wrap">
-
-  <div class="eyebrow">Work sample — Operator, Office of the CEO</div>
-  <h1>Leadership bandwidth doesn't scale <em>as fast</em> as the company does.</h1>
-  <p class="hero-sub">
-    That gap is the actual job. Below is a small, working piece of the fix — the kind of internal
-    agent an Operator would build and keep improving.
-  </p>
-
-  <blockquote>
-    "You'll ship the systems, automations, and rhythms that keep the company at the frontier... build
-    internal agents for the workflows that drag — auto-summaries, briefing prep, draft generation."
-    <cite>— InstaLILY, Operator job description</cite>
-  </blockquote>
-
-  <p class="bridge">
-    This console takes <b>raw, messy input</b> — notes, a transcript, scattered updates — and turns it
-    into one of three formats leadership actually needs: a leadership digest, a board-ready update, or
-    town hall talking points. It runs live against the Claude API. Pick a format, paste something in,
-    and generate.
-  </p>
-
-  <div class="console">
-    <div class="console-bar">
-      <div class="console-left">
-        <div class="led" id="led"></div>
-        <div>
-          <div class="console-title">Operator Console</div>
-          <div class="console-sub">Brief generation · v1 prototype</div>
-        </div>
-      </div>
-      <div class="status-readout" id="statusReadout">STATUS: <span>READY</span></div>
-    </div>
-
-    <div class="mode-row" id="modeRow">
-      <button class="mode-btn active" data-mode="digest" type="button">Leadership digest</button>
-      <button class="mode-btn" data-mode="board" type="button">Board update</button>
-      <button class="mode-btn" data-mode="townhall" type="button">Town hall talking points</button>
-    </div>
-
-    <div class="grid">
-      <div class="panel">
-        <div class="panel-head"><div class="panel-label">01 · Raw input</div></div>
-        <div class="panel-body">
-          <textarea id="inputText" placeholder="Paste messy notes, a call transcript, or scattered updates here..."></textarea>
-          <div class="btn-row">
-            <button id="sampleBtn" type="button">Load sample input</button>
-            <button id="generateBtn" class="btn-primary" type="button">Generate brief</button>
-          </div>
-          <div id="errorBox"></div>
-        </div>
-      </div>
-
-      <div class="panel">
-        <div class="panel-head"><div class="panel-label">02 · Output</div></div>
-        <div class="panel-body">
-          <div id="output" class="output-empty">Pick a format above, add input, and generate.</div>
-        </div>
-      </div>
-    </div>
-
-    <div class="footer-bar">
-      <span id="wordCount">0 words in / 0 words out</span>
-      <span>Model: claude-sonnet-4-6</span>
-    </div>
-  </div>
-
-</div>
-
-<script>
-  const MODES = {
-    digest: {
-      label: "Leadership digest",
-      system: "You are an internal briefing assistant at InstaLILY, an AI company building 'InstaWorkers' and 'Lily', an AI Forward Deployed Engineer, for the physical goods economy: industrial distribution, healthcare, supply chain, manufacturing, and automotive. Turn messy raw input into a tight, decision-ready brief for company leadership. Respond in plain text using exactly this structure, each label alone on its own capitalized line:\n\nSITUATION\n(1-2 sentences of context)\n\nSIGNAL\n(3-5 short bullet points, most important first, each starting with a dash)\n\nSO WHAT\n(1-2 sentences on why this matters)\n\nRECOMMENDED ACTION\n(one clear, specific next step)\n\nKeep the whole thing under 150 words. Be direct. Cut anything not decision-relevant. No markdown asterisks.",
-      placeholder: "Paste messy notes, a call transcript, or scattered updates here...",
-      sample: `Notes from today, kind of a mess:
-- Sales called, said the pilot with a regional distribution customer is going well but the customer's ops lead flagged that InstaWorkers response time slowed down last week during their peak order volume, want a call this week
-- Recruiting update: two Operator finalists in final round, one strong on the build side, one stronger on strategy, need a decision by Friday
-- Saw a competitor post about launching a "vertical agent marketplace" — feels aimed at the same distribution/logistics customers we're going after
-- Board deck is due in 9 days, still missing the updated retention numbers from CS
-- New office lease in London signed, move-in is in 3 weeks, need an announcement plan for the team
-- Reminder: town hall is Thursday, no agenda yet`
-    },
-    board: {
-      label: "Board update",
-      system: "You are an internal briefing assistant at InstaLILY, an AI company building 'InstaWorkers' and 'Lily', an AI Forward Deployed Engineer, for the physical goods economy. Turn messy raw input into a crisp board-ready update. Respond in plain text using exactly this structure, each label alone on its own capitalized line:\n\nHEADLINE\n(one line, the single most important takeaway)\n\nPROGRESS\n(2-3 short bullets of what moved or shipped, each starting with a dash)\n\nRISKS\n(1-2 short bullets of what could go wrong, each starting with a dash)\n\nASK\n(what, if anything, the board should weigh in on or approve)\n\nKeep the whole thing under 150 words. Be precise and unemotional. No markdown asterisks.",
-      placeholder: "Paste messy notes on what shipped, risks, and decisions needed...",
-      sample: `Random scraps for board prep:
-- Closed the $60M round finally, wire landed, we should probably tell the board formally even though most of them were part of it
-- Revenue is up but I don't have the exact multiple yet, ops team says "around 5x" for the year
-- One large healthcare customer paused their expansion conversation because of a procurement freeze on their end, not about us, but it affects our Q3 forecast
-- London office lease signed, opens in 3 weeks
-- We still haven't finalized the two open VP roles, might need more time before board wants a headcount plan
-- NVIDIA partnership conversation is progressing, nothing signed yet`
-    },
-    townhall: {
-      label: "Town hall talking points",
-      system: "You are an internal communications assistant at InstaLILY, an AI company building 'InstaWorkers' and 'Lily', an AI Forward Deployed Engineer, for the physical goods economy. Turn messy raw input into short, energizing town hall talking points for the whole company, not just leadership. Respond in plain text using exactly this structure, each label alone on its own capitalized line:\n\nTHE HEADLINE\n(one line, what happened, in plain language)\n\nWHY IT MATTERS\n(1-2 sentences connecting it to the company's mission or momentum)\n\nTHE NUMBER\n(one concrete stat if one exists in the input, otherwise the clearest fact available)\n\nWHAT'S NEXT\n(1 sentence, forward-looking)\n\nKeep the whole thing under 120 words. Warm but not corporate. No markdown asterisks.",
-      placeholder: "Paste messy notes on what happened this week worth sharing company-wide...",
-      sample: `Stuff worth mentioning at town hall probably:
-- We shipped the new InstaBrain update to three customers this week, one of them said it cut their response time nearly in half
-- Closed Series B, $60M, led by Energize Capital, this is a big deal for the team
-- New engineer starting Monday on the Toronto team
-- Someone on CS had a really good week, landed a renewal that was looking shaky
-- Reminder we're past $200M in incremental revenue driven for customers total now`
-    }
-  };
-
-  let currentMode = 'digest';
-  let lastBriefText = '';
-
-  const inputText = document.getElementById('inputText');
-  const generateBtn = document.getElementById('generateBtn');
-  const sampleBtn = document.getElementById('sampleBtn');
-  const output = document.getElementById('output');
-  const led = document.getElementById('led');
-  const statusReadout = document.getElementById('statusReadout');
-  const errorBox = document.getElementById('errorBox');
-  const wordCount = document.getElementById('wordCount');
-  const modeRow = document.getElementById('modeRow');
-
-  modeRow.addEventListener('click', (e) => {
-    const btn = e.target.closest('.mode-btn');
-    if(!btn) return;
-    currentMode = btn.dataset.mode;
-    [...modeRow.children].forEach(b => b.classList.toggle('active', b === btn));
-    inputText.placeholder = MODES[currentMode].placeholder;
-    resetOutput();
-  });
-
-  function resetOutput(){
-    output.className = 'output-empty';
-    output.textContent = 'Pick a format above, add input, and generate.';
-    errorBox.innerHTML = '';
-    setStatus('idle');
-    lastBriefText = '';
-    updateWordCount();
-  }
-
-  sampleBtn.addEventListener('click', () => {
-    inputText.value = MODES[currentMode].sample;
-    updateWordCount();
-  });
-
-  function updateWordCount(outWords){
-    const inWords = inputText.value.trim() ? inputText.value.trim().split(/\s+/).length : 0;
-    wordCount.textContent = `${inWords} words in / ${outWords || 0} words out`;
-  }
-  inputText.addEventListener('input', () => updateWordCount());
-
-  function setStatus(state){
-    led.className = 'led';
-    if(state === 'processing'){
-      led.classList.add('processing');
-      statusReadout.innerHTML = 'STATUS: <span>PROCESSING</span>';
-    } else if(state === 'done'){
-      led.classList.add('done');
-      statusReadout.innerHTML = 'STATUS: <span>COMPLETE</span>';
-    } else {
-      statusReadout.innerHTML = 'STATUS: <span>READY</span>';
+  // Optional access gate. If ACCESS_PASSCODE is set in your Vercel env vars,
+  // every request must include the matching x-access-passcode header. If
+  // it's not set, the app stays open to anyone with the link (original
+  // behavior) — this is opt-in, not a breaking change.
+  if (process.env.ACCESS_PASSCODE) {
+    const provided = req.headers["x-access-passcode"];
+    if (provided !== process.env.ACCESS_PASSCODE) {
+      return res.status(401).json({ error: "Incorrect or missing access code." });
     }
   }
 
-  function renderBrief(text){
-    const lines = text.split('\n');
-    let html = '';
-    let sectionOpen = false;
-    for(const raw of lines){
-      const line = raw.trim();
-      if(!line) continue;
-      const isHeader = /^[A-Z][A-Z' \-]{2,32}$/.test(line) && line.length < 32;
-      if(isHeader){
-        if(sectionOpen) html += `</div>`;
-        html += `<div class="output-section"><h4>${line}</h4>`;
-        sectionOpen = true;
-      } else {
-        html += `<div>${line.replace(/^[-•]\s*/, '— ')}</div>`;
+  const { mode, input } = req.body || {};
+
+  if (!mode || !MODES[mode]) {
+    return res.status(400).json({ error: "Invalid or missing 'mode'." });
+  }
+  if (!input || !String(input).trim()) {
+    return res.status(400).json({ error: "Missing 'input' text." });
+  }
+  if (!process.env.ANTHROPIC_API_KEY) {
+    return res.status(500).json({ error: "Server is missing ANTHROPIC_API_KEY." });
+  }
+
+  try {
+    // 1. Generate the brief with Claude
+    const claudeResponse = await fetch("https://api.anthropic.com/v1/messages", {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/json",
+        "x-api-key": process.env.ANTHROPIC_API_KEY,
+        "anthropic-version": "2023-06-01",
+      },
+      body: JSON.stringify({
+        model: "claude-sonnet-4-6",
+        max_tokens: 1000,
+        system: MODES[mode].system,
+        messages: [{ role: "user", content: String(input) }],
+      }),
+    });
+
+    if (!claudeResponse.ok) {
+      const errText = await claudeResponse.text();
+      throw new Error(`Claude API error (${claudeResponse.status}): ${errText}`);
+    }
+
+    const claudeData = await claudeResponse.json();
+    const briefText = (claudeData.content || [])
+      .filter((block) => block.type === "text")
+      .map((block) => block.text)
+      .join("\n")
+      .trim();
+
+    if (!briefText) {
+      throw new Error("Claude returned no text content.");
+    }
+
+    // 2. Push the brief into Notion, if credentials are configured.
+    // This step is optional — the brief still returns to the browser
+    // even if Notion isn't set up yet.
+    let notionUrl = null;
+    if (process.env.NOTION_TOKEN && process.env.NOTION_DATABASE_ID) {
+      try {
+        const notionResponse = await fetch("https://api.notion.com/v1/pages", {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${process.env.NOTION_TOKEN}`,
+            "Content-Type": "application/json",
+            "Notion-Version": "2022-06-28",
+          },
+          body: JSON.stringify({
+            parent: { database_id: process.env.NOTION_DATABASE_ID },
+            properties: {
+              Name: {
+                title: [
+                  {
+                    text: {
+                      content: `${MODES[mode].label} — ${new Date().toLocaleString()}`,
+                    },
+                  },
+                ],
+              },
+              Mode: {
+                select: { name: MODES[mode].label },
+              },
+            },
+            children: briefText
+              .split("\n")
+              .filter((line) => line.trim().length > 0)
+              .slice(0, 90) // Notion caps blocks per request; keep this well under it
+              .map((line) => ({
+                object: "block",
+                type: "paragraph",
+                paragraph: {
+                  rich_text: [{ type: "text", text: { content: line.slice(0, 2000) } }],
+                },
+              })),
+          }),
+        });
+
+        if (notionResponse.ok) {
+          const notionData = await notionResponse.json();
+          notionUrl = notionData.url || null;
+        } else {
+          const errText = await notionResponse.text();
+          console.error("Notion push failed:", errText);
+        }
+      } catch (notionErr) {
+        console.error("Notion push threw an error:", notionErr);
       }
     }
-    if(sectionOpen) html += `</div>`;
 
-    html += `<div class="output-actions">
-      <button class="btn-ghost" id="copyBtn" type="button">Copy text</button>
-      <button class="btn-ghost" id="downloadBtn" type="button">Download .txt</button>
-    </div>`;
-
-    output.className = 'output';
-    output.innerHTML = html || text;
-
-    document.getElementById('copyBtn').addEventListener('click', () => {
-      navigator.clipboard.writeText(lastBriefText).then(() => {
-        const b = document.getElementById('copyBtn');
-        const old = b.textContent;
-        b.textContent = 'Copied';
-        setTimeout(() => { b.textContent = old; }, 1400);
-      });
-    });
-    document.getElementById('downloadBtn').addEventListener('click', () => {
-      const blob = new Blob([lastBriefText], { type: 'text/plain' });
-      const url = URL.createObjectURL(blob);
-      const a = document.createElement('a');
-      a.href = url;
-      a.download = `instalily-${currentMode}-brief.txt`;
-      a.click();
-      URL.revokeObjectURL(url);
-    });
+    return res.status(200).json({ brief: briefText, notionUrl });
+  } catch (err) {
+    console.error("generate-brief error:", err);
+    return res.status(500).json({ error: err.message || "Unknown server error." });
   }
-
-  async function generateBrief(){
-    const raw = inputText.value.trim();
-    errorBox.innerHTML = '';
-    if(!raw){
-      errorBox.innerHTML = '<div class="error-box">Add some input first, or load the sample.</div>';
-      return;
-    }
-
-    generateBtn.disabled = true;
-    setStatus('processing');
-    output.className = 'output-empty';
-    output.textContent = 'Generating...';
-
-    try{
-      const response = await fetch("https://api.anthropic.com/v1/messages", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({
-          model: "claude-sonnet-4-6",
-          max_tokens: 1000,
-          system: MODES[currentMode].system,
-          messages: [{ role: "user", content: raw }]
-        })
-      });
-
-      if(!response.ok){ throw new Error(`API returned status ${response.status}`); }
-
-      const data = await response.json();
-      const textBlocks = (data.content || [])
-        .filter(item => item.type === "text")
-        .map(item => item.text);
-
-      const briefText = textBlocks.join('\n').trim();
-      if(!briefText){ throw new Error("No text returned from the model."); }
-
-      lastBriefText = briefText;
-      renderBrief(briefText);
-      updateWordCount(briefText.trim().split(/\s+/).length);
-      setStatus('done');
-
-    } catch(err){
-      console.error("Brief generation error:", err);
-      errorBox.innerHTML = `<div class="error-box">Generation failed: ${err.message}. Try again in a moment.</div>`;
-      output.className = 'output-empty';
-      output.textContent = 'Pick a format above, add input, and generate.';
-      setStatus('idle');
-    } finally {
-      generateBtn.disabled = false;
-    }
-  }
-
-  generateBtn.addEventListener('click', generateBrief);
-</script>
-
-</body>
-</html>
+}
