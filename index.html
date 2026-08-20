@@ -232,11 +232,77 @@
     border-top: 1px solid var(--line); background: var(--panel-2); flex-wrap: wrap; gap: 8px;
   }
   .footer-bar span{ font-family:'IBM Plex Mono', monospace; font-size: 10px; letter-spacing: 0.07em; color: var(--text-faint); text-transform: uppercase; }
+
+  .gate-overlay{
+    position: fixed;
+    inset: 0;
+    z-index: 100;
+    background: var(--bg);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 20px;
+  }
+  .gate-overlay.hidden{ display: none; }
+
+  .gate-card{
+    max-width: 420px;
+    width: 100%;
+    border: 1px solid var(--line);
+    border-radius: 6px;
+    background: var(--panel);
+    padding: 32px 28px;
+  }
+  .gate-title{
+    font-size: 20px;
+    font-weight: 700;
+    line-height: 1.35;
+    margin: 0 0 10px;
+  }
+  .gate-sub{
+    font-size: 13px;
+    color: var(--text-dim);
+    line-height: 1.6;
+    margin: 0 0 22px;
+  }
+  #gateForm{ display: flex; gap: 10px; }
+  .gate-input{
+    flex: 1;
+    background: var(--panel-2);
+    border: 1px solid var(--line);
+    border-radius: 3px;
+    color: var(--text);
+    font-family: 'Inter', sans-serif;
+    font-size: 14px;
+    padding: 11px 12px;
+  }
+  .gate-input:focus{ outline: 2px solid var(--teal); outline-offset: 1px; }
+  .gate-submit{ padding: 11px 18px; }
+  .gate-error{
+    margin-top: 12px;
+    font-family: 'IBM Plex Mono', monospace;
+    font-size: 12px;
+    color: #ffb3b3;
+    min-height: 16px;
+  }
 </style>
 </head>
 <body>
 
 <div class="bg-grid"></div>
+
+<div id="gateOverlay" class="gate-overlay">
+  <div class="gate-card">
+    <div class="eyebrow" style="margin-bottom:18px;">Private work sample</div>
+    <h2 class="gate-title">Enter the access code you were given</h2>
+    <p class="gate-sub">This tool runs on a personal API key, so access is limited to people it was shared with directly.</p>
+    <form id="gateForm">
+      <input type="password" id="gateInput" class="gate-input" placeholder="Access code" autocomplete="off" />
+      <button type="submit" class="btn-primary gate-submit">Enter</button>
+    </form>
+    <div id="gateError" class="gate-error"></div>
+  </div>
+</div>
 
 <div class="wrap">
 
@@ -360,6 +426,51 @@
 
   let currentMode = 'digest';
   let lastBriefText = '';
+  let accessPasscode = sessionStorage.getItem('operatorConsolePasscode') || '';
+
+  // ---- Access gate ----
+  const gateOverlay = document.getElementById('gateOverlay');
+  const gateForm = document.getElementById('gateForm');
+  const gateInput = document.getElementById('gateInput');
+  const gateError = document.getElementById('gateError');
+
+  async function checkPasscode(code){
+    const res = await fetch('/api/verify-passcode', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ passcode: code })
+    });
+    return res.ok;
+  }
+
+  async function tryOpenGate(){
+    // If nothing stored yet, still ask the backend once: if ACCESS_PASSCODE
+    // isn't configured at all, verify-passcode always says ok and the gate
+    // never shows.
+    const ok = await checkPasscode(accessPasscode);
+    if(ok){
+      gateOverlay.classList.add('hidden');
+    } else {
+      gateOverlay.classList.remove('hidden');
+    }
+  }
+  tryOpenGate();
+
+  gateForm.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    gateError.textContent = '';
+    const code = gateInput.value;
+    const ok = await checkPasscode(code);
+    if(ok){
+      accessPasscode = code;
+      sessionStorage.setItem('operatorConsolePasscode', code);
+      gateOverlay.classList.add('hidden');
+    } else {
+      gateError.textContent = 'That code isn\u2019t right \u2014 try again.';
+      gateInput.value = '';
+      gateInput.focus();
+    }
+  });
 
   const inputText = document.getElementById('inputText');
   const generateBtn = document.getElementById('generateBtn');
@@ -555,12 +666,19 @@
     try{
       const response = await fetch('/api/generate-brief', {
         method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
+        headers: {
+          'Content-Type': 'application/json',
+          'x-access-passcode': accessPasscode
+        },
         body: JSON.stringify({ mode: currentMode, input: raw })
       });
 
       const data = await response.json();
       if(!response.ok){
+        if(response.status === 401){
+          sessionStorage.removeItem('operatorConsolePasscode');
+          gateOverlay.classList.remove('hidden');
+        }
         throw new Error(data.error || `Request failed (${response.status})`);
       }
 
